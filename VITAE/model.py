@@ -3,6 +3,9 @@ import tensorflow as tf
 from tensorflow.keras.layers import Layer, Dense, BatchNormalization
 import tensorflow_probability as tfp
 from tensorflow.keras.utils import Progbar
+from .utils import compute_mmd, _nelem, _nan2zero, _nan2inf, _reduce_mean
+from tensorflow.keras import backend as K
+import time
 
  
 class cdf_layer(Layer):
@@ -260,8 +263,8 @@ class LatentSpace(Layer):
         '''
         super(LatentSpace, self).__init__(name=name, **kwargs)
         self.dim_latent = dim_latent
-        self.n_clusters = n_clusters
-        self.n_states = int(n_clusters*(n_clusters+1)/2)
+        self.n_states = n_clusters
+        self.n_categories = int(n_clusters*(n_clusters+1)/2)
 
         # nonzero indexes
         # A = [0,0,...,0  , 1,1,...,1,   ...]
@@ -270,14 +273,14 @@ class LatentSpace(Layer):
         self.A = tf.convert_to_tensor(self.A, tf.int32)
         self.B = tf.convert_to_tensor(self.B, tf.int32)
         self.clusters_ind = tf.boolean_mask(
-            tf.range(0,self.n_states,1), self.A==self.B)
+            tf.range(0,self.n_categories,1), self.A==self.B)
 
-        # [pi_1, ... , pi_K] in R^(n_states)
-        self.pi = tf.Variable(tf.ones([1, self.n_states], dtype=tf.keras.backend.floatx()) / self.n_states,
+        # [pi_1, ... , pi_K] in R^(n_categories)
+        self.pi = tf.Variable(tf.ones([1, self.n_categories], dtype=tf.keras.backend.floatx()) / self.n_categories,
                                 name = 'pi')
         
         # [mu_1, ... , mu_K] in R^(dim_latent * n_clusters)
-        self.mu = tf.Variable(tf.random.uniform([self.dim_latent, self.n_clusters],
+        self.mu = tf.Variable(tf.random.uniform([self.dim_latent, self.n_states],
                                                 minval = -1, maxval = 1, seed=seed, dtype=tf.keras.backend.floatx()),
                                 name = 'mu')
         self.cdf_layer = cdf_layer()       
@@ -308,19 +311,19 @@ class LatentSpace(Layer):
         batch_size = tf.shape(z)[0]
         L = tf.shape(z)[1]
         
-        # [batch_size, L, n_states]
+        # [batch_size, L, n_categories]
         temp_pi = tf.tile(
             tf.expand_dims(tf.nn.softmax(self.pi), 1),
             (batch_size,L,1))
                         
-        # [batch_size, L, d, n_states]
+        # [batch_size, L, d, n_categories]
         alpha_zc = tf.expand_dims(tf.expand_dims(
             tf.gather(self.mu, self.B, axis=1) - tf.gather(self.mu, self.A, axis=1), 0), 0)
         beta_zc = tf.expand_dims(z,-1) - \
             tf.expand_dims(tf.expand_dims(
             tf.gather(self.mu, self.B, axis=1), 0), 0)
             
-        # [batch_size, L, n_states]
+        # [batch_size, L, n_categories]
         _inv_sig = tf.reduce_sum(alpha_zc * alpha_zc, axis=2)
         _nu = - tf.reduce_sum(alpha_zc * beta_zc, axis=2) * tf.math.reciprocal_no_nan(_inv_sig)
         _t = - tf.reduce_sum(beta_zc * beta_zc, axis=2) + _nu**2*_inv_sig
@@ -328,7 +331,7 @@ class LatentSpace(Layer):
     
     @tf.function
     def _get_pz(self, temp_pi, _inv_sig, beta_zc, log_p_z_c_L):
-        # [batch_size, L, n_states]
+        # [batch_size, L, n_categories]
         log_p_zc_L = - 0.5 * self.dim_latent * tf.math.log(tf.constant(2 * np.pi, tf.keras.backend.floatx())) + \
             tf.math.log(temp_pi) + \
             tf.where(_inv_sig==0, 
@@ -347,7 +350,7 @@ class LatentSpace(Layer):
         L = tf.shape(log_p_z_L)[1]
 
         # log_p_c_x     -   predicted probability distribution
-        # [batch_size, n_states]
+        # [batch_size, n_categories]
         log_p_c_x = tf.reduce_logsumexp(
                         log_p_zc_L - log_p_z_L,
                     axis=1) - tf.math.log(tf.cast(L, tf.keras.backend.floatx()))
@@ -362,18 +365,18 @@ class LatentSpace(Layer):
             scale = tf.constant(1.0, tf.keras.backend.floatx()), 
             allow_nan_stats=False)
         
-        # [batch_size, L, n_states, n_clusters]
+        # [batch_size, L, n_categories, n_clusters]
         _inv_sig = tf.expand_dims(_inv_sig, -1)
-        _sig = tf.tile(tf.clip_by_value(tf.math.reciprocal_no_nan(_inv_sig), 1e-12, 1e30), (1,1,1,self.n_clusters))
-        log_eta0 = tf.tile(tf.expand_dims(log_eta0, -1), (1,1,1,self.n_clusters))
-        eta1 = tf.tile(tf.expand_dims(eta1, -1), (1,1,1,self.n_clusters))
-        eta2 = tf.tile(tf.expand_dims(eta2, -1), (1,1,1,self.n_clusters))
+        _sig = tf.tile(tf.clip_by_value(tf.math.reciprocal_no_nan(_inv_sig), 1e-12, 1e30), (1,1,1,self.n_states))
+        log_eta0 = tf.tile(tf.expand_dims(log_eta0, -1), (1,1,1,self.n_states))
+        eta1 = tf.tile(tf.expand_dims(eta1, -1), (1,1,1,self.n_states))
+        eta2 = tf.tile(tf.expand_dims(eta2, -1), (1,1,1,self.n_states))
         _nu = tf.tile(tf.expand_dims(_nu, -1), (1,1,1,1))
         A = tf.tile(tf.expand_dims(tf.expand_dims(
-            tf.one_hot(self.A, self.n_clusters, dtype=tf.keras.backend.floatx()), 
+            tf.one_hot(self.A, self.n_states, dtype=tf.keras.backend.floatx()), 
             0),0), (batch_size,L,1,1))
         B = tf.tile(tf.expand_dims(tf.expand_dims(
-            tf.one_hot(self.B, self.n_clusters, dtype=tf.keras.backend.floatx()), 
+            tf.one_hot(self.B, self.n_states, dtype=tf.keras.backend.floatx()), 
             0),0), (batch_size,L,1,1))
         temp_pi = tf.expand_dims(temp_pi, -1)
 
@@ -525,7 +528,7 @@ class VariationalAutoEncoder(tf.keras.Model):
     Combines the encoder, decoder and LatentSpace into an end-to-end model for training and inference.
     """
     def __init__(self, dim_origin, dimensions, dim_latent,
-                 data_type = 'UMI', has_cov=False,
+                 data_type = 'UMI', has_cov=False, gamma = 0,
                  name = 'autoencoder', **kwargs):
         '''
         Parameters
@@ -540,6 +543,8 @@ class VariationalAutoEncoder(tf.keras.Model):
             `'UMI'`, `'non-UMI'`, or `'Gaussian'`.
         has_cov : boolean
             Whether has covariates or not.
+        gamma : float, optional
+            The weights of the MMD loss
         name : str, optional
             The name of the layer.
         **kwargs : 
@@ -552,6 +557,7 @@ class VariationalAutoEncoder(tf.keras.Model):
         self.encoder = Encoder(dimensions, dim_latent)
         self.decoder = Decoder(dimensions[::-1], dim_origin, data_type, data_type)        
         self.has_cov = has_cov
+        self.gamma = gamma
         
     def init_latent_space(self, n_clusters, mu, log_pi=None):
         '''Initialze the latent space.
@@ -565,12 +571,12 @@ class VariationalAutoEncoder(tf.keras.Model):
         log_pi : np.array, optional
             \([1, K]\) \(\\log\\pi\).
         '''
-        self.n_clusters = n_clusters
-        self.latent_space = LatentSpace(self.n_clusters, self.dim_latent)
+        self.n_states = n_clusters
+        self.latent_space = LatentSpace(self.n_states, self.dim_latent)
         self.latent_space.initialize(mu, log_pi)
 
     def call(self, x_normalized, c_score, x = None, scale_factor = 1,
-             pre_train = False, L=1, alpha=0.0):
+             pre_train = False, L=1, alpha=0.0, conditions = None):
         '''Feed forward through encoder, LatentSpace layer and decoder.
 
         Parameters
@@ -589,6 +595,8 @@ class VariationalAutoEncoder(tf.keras.Model):
             The number of MC samples.
         alpha : float, optional
             The penalty parameter for covariates adjustment.
+        conditions: str or list, optional
+            The conditions of different cells from the selected batch
 
         Returns
         ----------
@@ -603,6 +611,38 @@ class VariationalAutoEncoder(tf.keras.Model):
         else:
             x_normalized
         _, z_log_var, z = self.encoder(x_normalized, L)
+
+        # The block below is used to calculate the MMD loss
+        if self.gamma != 0:
+            z_pred = z[~tf.math.is_nan(conditions)]
+            conditions = conditions[~tf.math.is_nan(conditions)]
+            #print("The conditions are after", tf.reduce_sum(conditions))
+
+            unique_group_name = tf.unique(tf.cast(tf.unique(conditions[~tf.math.is_nan(conditions)])[0], tf.int32))[0]
+            group_label = tf.cast(conditions, tf.int32)
+            mmd_loss = 0.0
+
+            #time_start = time.time()
+            for group_name in unique_group_name:
+                idx = tf.equal(group_label, group_name)
+                indv_group = conditions[idx]
+                indv_group = tf.math.subtract(indv_group, tf.cast(group_name, tf.float64))
+                indv_group = tf.math.multiply(indv_group, 10)
+                indv_group = tf.cast(tf.math.round(indv_group), tf.int32)
+                n_group = tf.shape(tf.unique(indv_group)[0])[0].numpy()
+
+                if n_group == 1:
+                    _loss = 0.0
+                else:
+                    _loss = self._mmd_loss(real_labels=indv_group, y_pred=z_pred[idx], gamma = self.gamma,
+                                           n_conditions = n_group,
+                                           kernel_method='multi-scale-rbf',
+                                           computation_method="general")
+
+                    #print("The _loss is ", _loss)
+                    mmd_loss = mmd_loss + _loss
+        else:
+            mmd_loss = 0.0
                 
         z_in = tf.concat([z, tf.tile(tf.expand_dims(c_score,1), (1,L,1))], -1) if self.has_cov else z
         
@@ -615,7 +655,7 @@ class VariationalAutoEncoder(tf.keras.Model):
             reconstruction_zero_loss = self._get_reconstruction_loss(x, zero_in, scale_factor, 1)
             reconstruction_z_loss = (1-alpha)*reconstruction_z_loss + alpha*reconstruction_zero_loss
         
-        self.add_loss(reconstruction_z_loss)
+        self.add_loss(reconstruction_z_loss + mmd_loss)
 
         if not pre_train:        
             log_p_z = self.latent_space(z, inference=False)
@@ -670,6 +710,27 @@ class VariationalAutoEncoder(tf.keras.Model):
 
             neg_E_nb = tf.reduce_mean(tf.reduce_sum(neg_E_nb, axis=-1))
             return neg_E_nb
+
+    def _mmd_loss(self, real_labels, y_pred, gamma, n_conditions, kernel_method='multi-scale-rbf',
+                  computation_method="general"):
+        #print("The n_group in the function is ", n_conditions)
+        #print("The real_labels is", tf.reduce_sum(real_labels))
+        real_labels = K.reshape(K.cast(real_labels, 'int32'), (-1,))
+        conditions_mmd = tf.dynamic_partition(y_pred, real_labels, num_partitions=n_conditions)
+        loss = 0.0
+        if computation_method.isdigit():
+            boundary = int(computation_method)
+            ## 每两个不同的组之间都会计算一个kernal距离
+            for i in range(boundary):
+                for j in range(boundary, n_conditions):
+                    loss += _nan2zero(compute_mmd(conditions_mmd[i], conditions_mmd[j], kernel_method))
+        else:
+            for i in range(len(conditions_mmd)):
+                for j in range(i):
+                    loss += _nan2zero(compute_mmd(conditions_mmd[i], conditions_mmd[j], kernel_method))
+
+        # print("The loss is ", loss)
+        return gamma * loss
     
     def get_z(self, x_normalized, c_score):    
         '''Get \(q(Z_i|Y_i,X_i)\).
