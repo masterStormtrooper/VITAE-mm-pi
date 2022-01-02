@@ -56,7 +56,7 @@ def warp_dataset(X_normalized, c_score, batch_size:int, X=None, scale_factor=Non
         return test_dataset
 
 
-def pre_train(train_dataset, test_dataset, vae, learning_rate: float, L: int, alpha: float,
+def pre_train(train_dataset, test_dataset, vae, learning_rate: float, L: int, alpha: float, gamma: float,
               num_epoch: int, num_step_per_epoch: int, 
               es_patience: int, es_tolerance: int, es_relative: bool,
               verbose: bool = True, conditions = None):
@@ -115,7 +115,7 @@ def pre_train(train_dataset, test_dataset, vae, learning_rate: float, L: int, al
         # Iterate over the batches of the dataset.
         for step, (x_batch, x_norm_batch, c_score, x_scale_factor, x_condition) in enumerate(train_dataset):
             with tf.GradientTape() as tape:
-                losses = vae(x_norm_batch, c_score, x_batch, x_scale_factor, pre_train=True, L=L, alpha=alpha, conditions = x_condition)
+                losses = vae(x_norm_batch, c_score, x_batch, x_scale_factor, pre_train=True, L=L, alpha=alpha, gamma = gamma, conditions = x_condition)
                 # Compute reconstruction loss
                 loss = tf.reduce_sum(losses[0])
             grads = tape.gradient(loss, vae.trainable_weights,
@@ -128,7 +128,7 @@ def pre_train(train_dataset, test_dataset, vae, learning_rate: float, L: int, al
                     progbar.update(step+1, [('Reconstructed Loss', float(loss))])
                 
         for step, (x_batch, x_norm_batch, c_score, x_scale_factor, x_condition) in enumerate(test_dataset):
-            losses = vae(x_norm_batch, c_score, x_batch, x_scale_factor, pre_train=True, L=L, alpha=alpha,conditions = x_condition)
+            losses = vae(x_norm_batch, c_score, x_batch, x_scale_factor, pre_train=True, L=L, alpha=alpha, gamma = gamma, conditions = x_condition)
             loss = tf.reduce_sum(losses[0])
             loss_test(loss)
 
@@ -147,7 +147,7 @@ def pre_train(train_dataset, test_dataset, vae, learning_rate: float, L: int, al
 
 def train(train_dataset, test_dataset, vae,
         learning_rate: float, 
-        L: int, alpha: float, beta: float,
+        L: int, alpha: float, beta: float, gamma: float,
         num_epoch: int, num_step_per_epoch: int, 
         es_patience: int, es_tolerance: float, es_relative: bool, es_warmup: int, 
         verbose: bool = False, **kwargs):
@@ -212,10 +212,10 @@ def train(train_dataset, test_dataset, vae,
 
         
         # Iterate over the batches of the dataset.
-        for step, (x_batch, x_norm_batch, c_score, x_scale_factor) in enumerate(train_dataset):
+        for step, (x_batch, x_norm_batch, c_score, x_scale_factor, x_condition) in enumerate(train_dataset):
             if epoch<es_warmup:
                 with tf.GradientTape() as tape:
-                    losses = vae(x_norm_batch, c_score, x_batch, x_scale_factor, L=L, alpha=alpha)
+                    losses = vae(x_norm_batch, c_score, x_batch, x_scale_factor, L=L, alpha=alpha, gamma = gamma, conditions = x_condition)
                     # Compute reconstruction loss
                     loss = tf.reduce_sum(losses[1:])
                 grads = tape.gradient(loss, vae.latent_space.trainable_weights,
@@ -223,7 +223,7 @@ def train(train_dataset, test_dataset, vae,
                 optimizer_.apply_gradients(zip(grads, vae.latent_space.trainable_weights))
             else:
                 with tf.GradientTape() as tape:
-                    losses = vae(x_norm_batch, c_score, x_batch, x_scale_factor, L=L, alpha=alpha)
+                    losses = vae(x_norm_batch, c_score, x_batch, x_scale_factor, L=L, alpha=alpha, gamma = gamma, conditions = x_condition)
                     # Compute reconstruction loss
                     loss = tf.reduce_sum(losses*weight)
                 grads = tape.gradient(loss, vae.trainable_weights,
@@ -244,8 +244,8 @@ def train(train_dataset, test_dataset, vae,
                             ('loss_total'       ,   float(loss))
                             ])
                         
-        for step, (x_batch, x_norm_batch, c_score, x_scale_factor) in enumerate(test_dataset):
-            losses = vae(x_norm_batch, c_score, x_batch, x_scale_factor, L=L, alpha=alpha)
+        for step, (x_batch, x_norm_batch, c_score, x_scale_factor, x_condition) in enumerate(test_dataset):
+            losses = vae(x_norm_batch, c_score, x_batch, x_scale_factor, L=L, alpha=alpha, gamma = gamma, conditions = x_condition)
             loss = tf.reduce_sum(losses*weight)
             loss_test[0](losses[0])
             loss_test[1](losses[1])

@@ -32,7 +32,7 @@ class VITAE():
                copy_adata: bool = False,
                hidden_layers = [32],
                latent_space_dim: int = 16,
-               gamma = 0,conditions = None):
+               conditions = None):
         '''
         Get input data for model. Data need to be first processed using scancy and stored as an AnnData object
          The 'UMI' or 'non-UMI' model need the original count matrix, so the count matrix need to be saved in
@@ -115,15 +115,12 @@ class VITAE():
             self.conditions = np.array(adata.obs['condition'].values)
         else:
             self.conditions = conditions
-        self.gamma = gamma
-        if self.gamma == 0:
-            self.conditions = np.array([np.nan]*adata.shape[0])
+
 
         self.vae = model.VariationalAutoEncoder(
             self.X_output.shape[1], self.dimensions,
             self.dim_latent, self.model_type,
             False if self.c_score is None else True,
-            gamma = self.gamma
             )
 
         if hasattr(self, 'inferer'):
@@ -136,7 +133,7 @@ class VITAE():
         
 
     def pre_train(self, test_size = 0.1, random_state: int = 0,
-            learning_rate: float = 1e-2, batch_size: int = 256, L: int = 1, alpha: float = 0.10,
+            learning_rate: float = 1e-2, batch_size: int = 256, L: int = 1, alpha: float = 0.10, gamma: float = 1,
             num_epoch: int = 200, num_step_per_epoch: Optional[int] = None,
             early_stopping_patience: int = 10, early_stopping_tolerance: float = 0.01, 
             early_stopping_relative: bool = True, verbose: bool = False):
@@ -172,7 +169,11 @@ class VITAE():
             The conditions of different cells
         '''
 
-        conditions = self.conditions
+        if gamma == 0 or self.conditions is None:
+            conditions = np.array([np.nan] * self.adata.shape[0])
+        else:
+            conditions = self.conditions
+
 
         id_train, id_test = train_test_split(
                                 np.arange(self.X_input.shape[0]), 
@@ -192,12 +193,13 @@ class VITAE():
                                                 self.X_output[id_test].astype(tf.keras.backend.floatx()), 
                                                 self.scale_factor[id_test].astype(tf.keras.backend.floatx()),
                                                 conditions = conditions[id_test])
+
         self.vae = train.pre_train(
             self.train_dataset,
             self.test_dataset,
             self.vae,
             learning_rate,                        
-            L, alpha,
+            L, alpha, gamma,
             num_epoch,
             num_step_per_epoch,
             early_stopping_patience,
@@ -462,7 +464,7 @@ class VITAE():
 
     def train(self, stratify = False, test_size = 0.1, random_state: int = 0,
             learning_rate: float = 1e-2, batch_size: int = 256, 
-            L: int = 1, alpha: float = 0.10, beta: float = 2, 
+            L: int = 1, alpha: float = 0.10, beta: float = 2, gamma: float = 1,
             num_epoch: int = 200, num_step_per_epoch: Optional[int] =  None,
             early_stopping_patience: int = 10, early_stopping_tolerance: float = 0.01, 
             early_stopping_relative: bool = True, early_stopping_warmup: int = 0,
@@ -504,7 +506,12 @@ class VITAE():
             The path of weight file to be saved; not saving weight if None.
         **kwargs :  
             Extra key-value arguments for dimension reduction algorithms.        
-        '''        
+        '''
+        if gamma == 0 or self.conditions is None:
+            conditions = np.array([np.nan] * self.adata.shape[0])
+        else:
+            conditions = self.conditions
+
         if stratify is None:
             stratify = self.labels
         elif stratify is False:
@@ -521,12 +528,14 @@ class VITAE():
                                                 None if c is None else c[id_train],
                                                 batch_size, 
                                                 self.X_output[id_train].astype(tf.keras.backend.floatx()), 
-                                                self.scale_factor[id_train].astype(tf.keras.backend.floatx()))
+                                                self.scale_factor[id_train].astype(tf.keras.backend.floatx()),
+                                                conditions = conditions[id_train] )
         self.test_dataset = train.warp_dataset(self.X_input[id_test].astype(tf.keras.backend.floatx()),
                                                 None if c is None else c[id_test],
                                                 batch_size, 
                                                 self.X_output[id_test].astype(tf.keras.backend.floatx()), 
-                                                self.scale_factor[id_test].astype(tf.keras.backend.floatx()))    
+                                                self.scale_factor[id_test].astype(tf.keras.backend.floatx()),
+                                                conditions = conditions[id_test])
                                    
         self.vae = train.train(
             self.train_dataset,
@@ -536,6 +545,7 @@ class VITAE():
             L,
             alpha,
             beta,
+            gamma,
             num_epoch,
             num_step_per_epoch,
             early_stopping_patience,

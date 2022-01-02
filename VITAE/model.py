@@ -528,7 +528,7 @@ class VariationalAutoEncoder(tf.keras.Model):
     Combines the encoder, decoder and LatentSpace into an end-to-end model for training and inference.
     """
     def __init__(self, dim_origin, dimensions, dim_latent,
-                 data_type = 'UMI', has_cov=False, gamma = 0,
+                 data_type = 'UMI', has_cov=False,
                  name = 'autoencoder', **kwargs):
         '''
         Parameters
@@ -557,7 +557,6 @@ class VariationalAutoEncoder(tf.keras.Model):
         self.encoder = Encoder(dimensions, dim_latent)
         self.decoder = Decoder(dimensions[::-1], dim_origin, data_type, data_type)        
         self.has_cov = has_cov
-        self.gamma = gamma
         
     def init_latent_space(self, n_clusters, mu, log_pi=None):
         '''Initialze the latent space.
@@ -576,7 +575,7 @@ class VariationalAutoEncoder(tf.keras.Model):
         self.latent_space.initialize(mu, log_pi)
 
     def call(self, x_normalized, c_score, x = None, scale_factor = 1,
-             pre_train = False, L=1, alpha=0.0, conditions = None):
+             pre_train = False, L=1, alpha=0.0, gamma = 1.0, conditions = None):
         '''Feed forward through encoder, LatentSpace layer and decoder.
 
         Parameters
@@ -603,6 +602,7 @@ class VariationalAutoEncoder(tf.keras.Model):
         losses : float
             the loss.
         '''
+
         if not pre_train and self.latent_space is None:
             raise ReferenceError('Have not initialized the latent space.')
                     
@@ -612,11 +612,12 @@ class VariationalAutoEncoder(tf.keras.Model):
             x_normalized
         _, z_log_var, z = self.encoder(x_normalized, L)
 
+        self.gamma = gamma
+
         # The block below is used to calculate the MMD loss
         if self.gamma != 0:
             z_pred = z[~tf.math.is_nan(conditions)]
             conditions = conditions[~tf.math.is_nan(conditions)]
-            #print("The conditions are after", tf.reduce_sum(conditions))
 
             unique_group_name = tf.unique(tf.cast(tf.unique(conditions[~tf.math.is_nan(conditions)])[0], tf.int32))[0]
             group_label = tf.cast(conditions, tf.int32)
@@ -639,7 +640,6 @@ class VariationalAutoEncoder(tf.keras.Model):
                                            kernel_method='multi-scale-rbf',
                                            computation_method="general")
 
-                    #print("The _loss is ", _loss)
                     mmd_loss = mmd_loss + _loss
         else:
             mmd_loss = 0.0
@@ -713,8 +713,7 @@ class VariationalAutoEncoder(tf.keras.Model):
 
     def _mmd_loss(self, real_labels, y_pred, gamma, n_conditions, kernel_method='multi-scale-rbf',
                   computation_method="general"):
-        #print("The n_group in the function is ", n_conditions)
-        #print("The real_labels is", tf.reduce_sum(real_labels))
+
         real_labels = K.reshape(K.cast(real_labels, 'int32'), (-1,))
         conditions_mmd = tf.dynamic_partition(y_pred, real_labels, num_partitions=n_conditions)
         loss = 0.0
