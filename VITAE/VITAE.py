@@ -112,7 +112,7 @@ class VITAE():
         self.dim_latent = latent_space_dim
 
         if isinstance(conditions,str):
-            self.conditions = np.array(adata.obs['condition'].values)
+            self.conditions = np.array(adata.obs[conditions].values)
         else:
             self.conditions = conditions
 
