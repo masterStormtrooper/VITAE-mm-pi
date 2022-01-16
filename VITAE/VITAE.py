@@ -298,7 +298,7 @@ class VITAE():
 
 
     def init_latent_space(self, cluster_label = None, log_pi = None, res: float = 1.0, 
-                          ratio_prune= None, dist_thres = 0.5):
+                          ratio_prune= None, dist_thres = 0.5, pilayer = False):
         '''Initialize the latent space.
 
         Parameters
@@ -381,6 +381,9 @@ class VITAE():
 
         self.n_states = n_clusters
         self.labels = cluster_labels
+
+        if pilayer:
+            self.vae.create_pilayer()
         # Not sure if storing the this will be useful
         # self.init_labels_name = cluster_label
         

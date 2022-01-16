@@ -307,15 +307,19 @@ class LatentSpace(Layer):
         self.pi = tf.nn.softmax(self.pi)
 
     @tf.function
-    def _get_normal_params(self, z):
+    def _get_normal_params(self, z, pi):
         batch_size = tf.shape(z)[0]
         L = tf.shape(z)[1]
         
         # [batch_size, L, n_categories]
-        temp_pi = tf.tile(
-            tf.expand_dims(tf.nn.softmax(self.pi), 1),
-            (batch_size,L,1))
-                        
+        if pi is None:
+            # [batch_size, L, n_states]
+            temp_pi = tf.tile(
+                tf.expand_dims(tf.nn.softmax(self.pi), 1),
+                (batch_size,L,1))
+        else:
+            temp_pi = tf.expand_dims(tf.nn.softmax(pi), 1)
+
         # [batch_size, L, d, n_categories]
         alpha_zc = tf.expand_dims(tf.expand_dims(
             tf.gather(self.mu, self.B, axis=1) - tf.gather(self.mu, self.A, axis=1), 0), 0)
@@ -419,7 +423,7 @@ class LatentSpace(Layer):
         var_w_tilde = tf.reduce_mean(var_w_tilde, 1)
         return w_tilde, var_w_tilde
 
-    def get_pz(self, z, eps):
+    def get_pz(self, z, eps, pi):
         '''Get \(\\log p(Z_i|Y_i,X_i)\).
 
         Parameters
@@ -450,7 +454,7 @@ class LatentSpace(Layer):
         log_p_z : tf.Tensor
             \([B, 1]\) The estimated \(\\log p(Z_i|Y_i,X_i)\). 
         '''        
-        temp_pi, beta_zc, _inv_sig, _nu, _t = self._get_normal_params(z)
+        temp_pi, beta_zc, _inv_sig, _nu, _t = self._get_normal_params(z, pi)
         temp_pi = tf.clip_by_value(temp_pi, eps, 1.0)
 
         log_eta0 = 0.5 * (tf.math.log(tf.constant(2 * np.pi, tf.keras.backend.floatx())) - \
@@ -483,7 +487,7 @@ class LatentSpace(Layer):
         p_c_x = tf.exp(log_p_c_x).numpy()
         return p_c_x
 
-    def call(self, z, inference=False):
+    def call(self, z, pi=None, inference=False):
         '''Get posterior estimations.
 
         Parameters
@@ -508,7 +512,7 @@ class LatentSpace(Layer):
             The dict of posterior estimations - \(p(c_i|Y_i,X_i)\), \(c\), \(E(\\tilde{w}_i|Y_i,X_i)\), \(Var(\\tilde{w}_i|Y_i,X_i)\), \(D_{JS}\).
         '''                 
         eps = 1e-16 if not inference else 0.
-        temp_pi, _inv_sig, _nu, beta_zc, log_eta0, eta1, eta2, log_p_zc_L, log_p_z_L, log_p_z = self.get_pz(z, eps)
+        temp_pi, _inv_sig, _nu, beta_zc, log_eta0, eta1, eta2, log_p_zc_L, log_p_z_L, log_p_z = self.get_pz(z, eps, pi)
 
         if not inference:
             return log_p_z
@@ -573,9 +577,13 @@ class VariationalAutoEncoder(tf.keras.Model):
         self.n_states = n_clusters
         self.latent_space = LatentSpace(self.n_states, self.dim_latent)
         self.latent_space.initialize(mu, log_pi)
+        self.pilayer = None
+
+    def create_pilayer(self):
+        self.pilayer = Dense(self.n_states, name = 'pi_layer')
 
     def call(self, x_normalized, c_score, x = None, scale_factor = 1,
-             pre_train = False, L=1, alpha=0.0, gamma = 1.0, conditions = None):
+             pre_train = False, L=1, alpha=0.0, gamma = 1.0, conditions = None, pi_cov = None):
         '''Feed forward through encoder, LatentSpace layer and decoder.
 
         Parameters
@@ -657,8 +665,9 @@ class VariationalAutoEncoder(tf.keras.Model):
         
         self.add_loss(reconstruction_z_loss + mmd_loss)
 
-        if not pre_train:        
-            log_p_z = self.latent_space(z, inference=False)
+        if not pre_train:
+            pi = self.pilayer(pi_cov) if self.pilayer is not None else None
+            log_p_z = self.latent_space(z, pi, inference=False)
 
             # - E_q[log p(z)]
             self.add_loss(- log_p_z)
