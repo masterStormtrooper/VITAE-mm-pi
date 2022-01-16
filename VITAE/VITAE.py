@@ -93,7 +93,7 @@ class VITAE():
             self.c_score = None
 
         if pi_covariates is not None:
-            self.pi_cov = adata.obs[pi_covariates].to_numpy()
+            self.pi_cov = adata.obs[pi_covariates].to_numpy().reshape(-1, 1)
         else:
             self.pi_cov = None
             
@@ -382,8 +382,6 @@ class VITAE():
         self.n_states = n_clusters
         self.labels = cluster_labels
 
-        if pilayer:
-            self.vae.create_pilayer()
         # Not sure if storing the this will be useful
         # self.init_labels_name = cluster_label
         
@@ -398,6 +396,9 @@ class VITAE():
         self.mu = self.vae.latent_space.mu.numpy()
         self.pi = np.triu(np.ones(self.n_states))
         self.pi[self.pi > 0] = tf.nn.softmax(self.vae.latent_space.pi).numpy()[0]
+
+        if pilayer:
+            self.vae.create_pilayer()
 
     def update_latent_space(self, dist_thres: float=0.5):
         pi = self.pi[np.triu_indices(self.n_states)]
@@ -537,13 +538,15 @@ class VITAE():
                                                 batch_size, 
                                                 self.X_output[id_train].astype(tf.keras.backend.floatx()), 
                                                 self.scale_factor[id_train].astype(tf.keras.backend.floatx()),
-                                                conditions = conditions[id_train] )
+                                                conditions = conditions[id_train],
+                                                pi_cov = self.pi_cov[id_train])
         self.test_dataset = train.warp_dataset(self.X_input[id_test].astype(tf.keras.backend.floatx()),
                                                 None if c is None else c[id_test],
                                                 batch_size, 
                                                 self.X_output[id_test].astype(tf.keras.backend.floatx()), 
                                                 self.scale_factor[id_test].astype(tf.keras.backend.floatx()),
-                                                conditions = conditions[id_test])
+                                                conditions = conditions[id_test],
+                                                pi_cov = self.pi_cov[id_test])
                                    
         self.vae = train.train(
             self.train_dataset,

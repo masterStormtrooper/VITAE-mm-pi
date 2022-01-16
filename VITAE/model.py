@@ -580,7 +580,7 @@ class VariationalAutoEncoder(tf.keras.Model):
         self.pilayer = None
 
     def create_pilayer(self):
-        self.pilayer = Dense(self.n_states, name = 'pi_layer')
+        self.pilayer = Dense(self.latent_space.n_categories, name = 'pi_layer')
 
     def call(self, x_normalized, c_score, x = None, scale_factor = 1,
              pre_train = False, L=1, alpha=0.0, gamma = 1.0, conditions = None, pi_cov = None):
@@ -823,7 +823,7 @@ class VariationalAutoEncoder(tf.keras.Model):
         p_c_x = []
         w_tilde = []
         var_w_tilde = []
-        for step, (x,c_score) in enumerate(test_dataset):
+        for step, (x,c_score, _, _) in enumerate(test_dataset):
             x = tf.concat([x, c_score], -1) if self.has_cov else x
             _z_mean, _, z = self.encoder(x, L, False)
             res = self.latent_space(z, inference=True)
