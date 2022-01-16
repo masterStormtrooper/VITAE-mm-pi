@@ -25,7 +25,7 @@ class VITAE():
     Variational Inference for Trajectory by AutoEncoder.
     """
     def __init__(self, adata: sc.AnnData,
-               covariates = None,
+               covariates = None, pi_covariates = None,
                model_type: str = 'Gaussian',
                npc: int = 64,
                adata_layer_counts = None,
@@ -92,6 +92,11 @@ class VITAE():
         else:
             self.c_score = None
 
+        if pi_covariates is not None:
+            self.pi_cov = adata.obs[pi_covariates].to_numpy()
+        else:
+            self.pi_cov = None
+            
         self.model_type = model_type
         self._adata = sc.AnnData(X = self.adata.X, var = self.adata.var)
         self._adata.obs = self.adata.obs
