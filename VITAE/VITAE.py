@@ -45,6 +45,8 @@ class VITAE():
             The scanpy AnnData object. adata should already contain adata.var.highly_variable
         covariates : list, optional
             A list of names of covariate vectors that are stored in adata.obs
+        pi_covariates: list, optional
+            A list of names of covariate vectors used as input for pilayer
         model_type : str, optional
             'UMI', 'non-UMI' and 'Gaussian', default is 'Gaussian'.
         npc : int, optional
@@ -93,7 +95,9 @@ class VITAE():
             self.c_score = None
 
         if pi_covariates is not None:
-            self.pi_cov = adata.obs[pi_covariates].to_numpy().reshape(-1, 1)
+            self.pi_cov = adata.obs[pi_covariates].to_numpy()
+            if len(pi_covariates) == 1:
+                self.pi_cov = self.pi_cov.reshape(-1, 1)
         else:
             self.pi_cov = None
             
